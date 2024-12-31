@@ -9,8 +9,13 @@ const MyLoan = () => {
   // Get userId from sessionStorage
   const userId = sessionStorage.getItem("userId");
 
+  const apiUrl =
+    process.env.NODE_ENV === "production"
+      ? "https://loan-app-api.onrender.com"
+      : "http://localhost:3030";
+
   useEffect(() => {
-    fetch(`http://localhost:3030/my-loans/${userId}/loanNo/FA0001`, {
+    fetch(`${apiUrl}/my-loans/${userId}/loanNo/FA0001`, {
       method: "GET",
       headers: {
         Accept: "application/json",
