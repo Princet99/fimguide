@@ -9,7 +9,7 @@ dotenv.config();
 
 //queries import below
 const { userDetailsQuery } = require("./queries/user");
-const { loansQuery, loanDetailsQuery } = require("./queries/loan");
+const { loansQuery } = require("./queries/loan");
 const { paymentDataQuery, recentPaymentsQuery } = require("./queries/payment");
 const { comingUpQuery } = require("./queries/schedule");
 
@@ -26,88 +26,141 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+const currentDate = new Date();
+const date = currentDate.toISOString().split('T')[0]; 
+
+console.log(date)
+
+// Login
+app.get("/login", async (req, res) => {
+  const { username, password } = req.query;
+
+  if (!username || !password) {
+    return res
+      .status(400)
+      .json({ error: "Username and password are required" });
+  }
+
+  try {
+    // Query the database
+    const query =
+      "SELECT * FROM user WHERE first_name = ? AND last_name = ?";
+    const [rows] = await db.query(query, [username, password]);
+    
+    if (rows.length > 0) {
+      // Successful login
+      res.json({ success: true, message: "Login successful", id: rows[0].id });
+      console.log(rows)
+    } else {
+      // Invalid credentials
+      res
+        .status(401)
+        .json({ success: false, message: "Invalid username or password" });
+    }
+  } catch (error) {
+    console.log("Database error:", error);
+    res.status(500).json({ error: "An error occurred while logging in" });
+  }
+});
+
 // Route to fetch "My Loans" for a specific user
-app.get("/my-loans", async (req, res) => {
+app.get("/my-loans/:id/loanNo/:loanNo", async (req, res) => {
+  const loanId = req.params.id;
+  // const role = req.query.role;
+  const loanNo = req.params.loanNo;
+  // console.log(loanId, " ", role, " ", loanNo, " ");
+  // console.log(role);
   try {
     const [
-      userDetails,
-      loans,
-      comingUp,
-      loanDetails,
-      paymentData,
-      recentPayments,
+      [userDetails],
+      [loans],
+      [comingUp],
+      [paymentData],
+      [recentPayments],
     ] = await Promise.all([
-      db.query(userDetailsQuery, [1]), // Replace 1 with user ID
-      db.query(loansQuery, [1]), // Replace 1 with user ID
-      db.query(comingUpQuery, ["fa0001", "05/01/2025"]),
-      db.query(loanDetailsQuery, ["fa0001"]),
-      db.query(paymentDataQuery, ["fa0001"]),
-      db.query(recentPaymentsQuery, ["05/01/2025"]),
+      db.query(userDetailsQuery, [loanId]), 
+      db.query(loansQuery, [loanNo]), 
+      db.query(comingUpQuery, [loanNo, date]),
+      db.query(paymentDataQuery, [loanNo]),
+      db.query(recentPaymentsQuery, [loanNo,date]),
     ]);
 
-    // log
+    // log for debugging
     // console.log("User Details:", userDetails);
     // console.log("Loans:", loans);
     // console.log("Coming Up:", comingUp);
-    // console.log("Loan Details:", loanDetails);
     // console.log("Payment Data:", paymentData);
     // console.log("Recent Payments:", recentPayments);
 
-    // Restructure data
-    // Restructure data
-    const response = {
-      basic_details: {
-        id: userDetails[0][0].id, // Access the first object inside the first array
-        first_name: userDetails[0][0].first_name,
-        middle_name: userDetails[0][0].middle_name || "",
-        last_name: userDetails[0][0].last_name,
-      },
-      loan_as_lender: loans[0]
-        .filter((loan) => loan.role === "Lender")
-        .map((loan) => ({
-          LoanNumber: loan.loan_no,
-          creationdate: loan.creation_date,
-          status: loan.status,
-          amount: loan.amount,
-          interest: loan.interest,
-          score: loan.score || "0",
-        })),
-      loan_as_borrower: loans[0]
-        .filter((loan) => loan.role === "Borrower")
-        .map((loan) => ({
-          LoanNumber: loan.loan_no,
-          creationdate: loan.creation_date,
-          status: loan.status,
-          amount: loan.amount,
-          interest: loan.interest,
-          score: loan.score || "0",
-        })),
-      Coming_up: {
-        balance: comingUp[0][0]?.balance || 0,
-        dueDate: comingUp[0][0]?.due_date || null,
-        amountdue: comingUp[0][0]?.amount_due || 0,
-      },
-      loan_details: {
-        loan_amount: loanDetails[0][0]?.loan_amount || 0,
-        interest_rate: loanDetails[0][0]?.interest_rate || 0,
-        contract_date: loanDetails[0][0]?.contract_date || null,
-        end_date: loanDetails[0][0]?.end_date || null,
-      },
-      payment_breakdown: {
-        on_time_payments: paymentData[0][0]?.on_time_payments || 0,
-        pre_payments: 0, // Placeholder, since not included in query
-        late_payments: paymentData[0][0]?.past_due_payments || 0,
-      },
-      recent_payments: recentPayments[0].map((payment) => ({
-        ScheduledDate: payment.ScheduledDate,
-        scheduledPaidAmount: payment.scheduledPaidAmount,
-        ActualDate: payment.ActualDate,
-        PaidAmount: payment.PaidAmount,
-        Status: payment.Status || "Pending",
-      })),
-    };
+    const response = userDetails.reduce((acc, item) => {
+      // Determine the role (lender or borrower)
+      const role = item.role.toLowerCase(); // 'lender' or 'borrower'
+      const loanNo = item.loan_no.toLowerCase();
 
-    res.json(response);
+      // Initialize the nested object for the role if not already present
+      if (!acc[role]) {
+        acc[role] = {};
+      }
+      // Find the coming in the coming up array that matches the loan_no
+      const comingup = comingUp.find(
+        (comingup) => comingup.loan_no.toLowerCase() === loanNo
+      );
+
+      // Find the loan in the loans array that matches the loan_no
+      const loan = loans.find((loan) => loan.loan_no.toLowerCase() === loanNo);
+
+      // Find the payment breakdown details below
+      const paymentBreakdown = paymentData.find(
+        (payment) => payment.loan_no.toLowerCase() === loanNo
+      );
+      // Find the recent payment details below that matches the loan_no
+      // Find all recent payments for the loan_no
+      const recentPaymentsForLoan = recentPayments
+        .filter((recent) => recent.loan_no.toLowerCase() === loanNo)
+        .map((recent) => ({
+          scheduledDate: recent.ScheduledDate,
+          scheduledPaidAmount: recent.scheduledPaidAmount,
+          actualDate: recent.ActualDate,
+          paidAmount: recent.PaidAmount,
+          status: recent.Status,
+        }));
+
+      // Add the current item into the respective role's loan number section
+      acc[role][loanNo] = {
+        first_name: item.first_name.toLowerCase(),
+        last_name: item.last_name.toLowerCase(),
+        nickname: item.nickname.toLowerCase(),
+        coming_up: comingup
+          ? {
+              balance: comingup.balance,
+              due_date: comingup.due_date,
+              amount_due: comingup.amount_due,
+            }
+          : {},
+        loan_details: loan
+          ? {
+              loan_amount: loan.loan_amount,
+              interest_rate: loan.interest_rate,
+              contract_date: loan.contract_date,
+              end_date: loan.end_date,
+              status : loan.status,
+              score : loan.score,
+            }
+          : {},
+        paymentBreakdown: paymentBreakdown
+          ? {
+              onTimePayments: paymentBreakdown.on_time_payments,
+              prePayments: paymentBreakdown.past_due_payments,
+              latePayments: paymentBreakdown.future_payments,
+            }
+          : {},
+        recentPayments: recentPaymentsForLoan,
+      };
+
+      return acc;
+    }, {});
+
+    res.send(response);
   } catch (error) {
     console.error("Error fetching loan data:", error.message);
     res.status(500).send({ error: "Failed to fetch loan data" });
